@@ -1,6 +1,8 @@
 import routeconfig_module
-import vehiclelocations_module
 import xml.etree.ElementTree as eT
+import pyproj
+import time
+import requests
 
 
 class Stop:
@@ -9,7 +11,7 @@ class Stop:
         self.title = title
         self.lat = lat
         self.lon = lon
-        self.stopId = stop_id
+        self.stop_id = stop_id
 
 
 class Direction:
@@ -50,7 +52,7 @@ def print_stops(stops):
         print("Title:", stop.title)
         print("Latitude:", stop.lat)
         print("Longitude:", stop.lon)
-        print("Stop ID:", stop.stopId)
+        print("Stop ID:", stop.stop_id)
         print("-----------------------")
 
 
@@ -91,28 +93,98 @@ def main():
             direction_obj.add_stop(direction_stop_obj)
         directions.append(direction_obj)
 
-    root = eT.fromstring(vehiclelocations_module.vehicleLocations)
-    last_time = root.find("./lastTime").get("time")
+    last_update_time = '0'
+    command = "vehicleLocations"
+    route = "501"
+    delay = 10
+    for i in range(100):
+        print(f'i: {i}')
+        url = get_url_route_vehicle_locations(command, last_update_time, route)
+        response = requests.get(url, headers={"Content-Type": "application/json"})
+        xml = response.text
+        #print(f'{xml}')
+        root = eT.fromstring(xml)
+        vehicle_elements = root.findall("./vehicle")
+        print(f'{last_update_time} {len(vehicle_elements)}')
+        last_update_time = str(int(time.time()*1000)) #root.find("./lastTime").get("time")
+        time.sleep(delay)
 
+
+    # closest_stop_pairs = find_nearest_stops(xml, directions)
+    #
+    # for key in closest_stop_pairs:
+    #     vehicle_location_snapshot = closest_stop_pairs[key]["vehicle_location_snapshot"]
+    #     stop_from = closest_stop_pairs[key]["stop_from"]
+    #     stop_to = closest_stop_pairs[key]["stop_to"]
+    #     print(f'id:{vehicle_location_snapshot.vehicle_id} From:{stop_from.title} to To:{stop_to.title}')
+
+    pass
+
+
+def get_url_route_vehicle_locations(command, epoch_time, route):
+    url = 'https://webservices.umoiq.com/service/publicXMLFeed?command=' + command + '&a=ttc' + '&r=' + route + '&t=' + epoch_time
+    return url
+
+
+def find_nearest_stops(xml, directions):
+    root = eT.fromstring(xml)
+    last_time = root.find("./lastTime").get("time")
     vehicle_location_snapshots = []
     vehicle_elements = root.findall("./vehicle")
     for vehicle_element in vehicle_elements:
         vehicle_location_snapshot_obj = VehicleLocationSnapshot(
-            vehicle_id=vehicle_element.get("vehicle_id"),
-            route_tag=vehicle_element.get("route_tag"),
-            dir_tag=vehicle_element.get("dir_tag"),
-            lat=vehicle_element.get("lat"),
-            lon=vehicle_element.get("lon"),
-            secs_since_report=vehicle_element.get("secs_since_report"),
+            vehicle_id=vehicle_element.get("id"),
+            route_tag=vehicle_element.get("routeTag"),
+            dir_tag=vehicle_element.get("dirTag"),
+            lat=float(vehicle_element.get("lat")),
+            lon=float(vehicle_element.get("lon")),
+            secs_since_report=None if vehicle_element.get("secsSinceReport") is None else int(
+                vehicle_element.get("secsSinceReport")),
             predictable=vehicle_element.get("predictable"),
-            heading=vehicle_element.get("heading"),
-            speed_km_hr=vehicle_element.get("speed_km_hr"),
-            last_time=last_time
+            heading=None if int(vehicle_element.get("heading")) < 0 else int(vehicle_element.get("heading")),
+            speed_km_hr=None if vehicle_element.get("speedKmHr") is None else int(vehicle_element.get("speedKmHr")),
+            last_time=int(last_time)
         )
         vehicle_location_snapshots.append(vehicle_location_snapshot_obj)
-    print(len(vehicle_location_snapshots))
-    pass
+    geodesic = pyproj.Geod(ellps='WGS84')
+    closest_stop_pairs = {}
+    for vehicle_location_snapshot in vehicle_location_snapshots:
+        vehicle_lat = vehicle_location_snapshot.lat
+        vehicle_lon = vehicle_location_snapshot.lon
+        vehicle_id = vehicle_location_snapshot.vehicle_id
+        vehicle_dir = vehicle_location_snapshot.dir_tag
+        print(f'---{vehicle_id}---')
+        if vehicle_dir is None:
+            print(f'skipping {vehicle_id} : no direction')
+            continue
+        for direction in directions:
+            if direction.tag != vehicle_dir:
+                continue
+            stops = direction.stops
+            for stop_from, stop_to in zip(stops[::1], stops[1::1]):
+
+                # print(f'{stop_from.stop_id} {stop_from.lat} {stop_from.lon}')
+                # print(f'{stop_to.stop_id} {stop_to.lat} {stop_to.lon}')
+                # print(f'{vehicle_lat} {vehicle_lon}')
+
+                _, _, distance_vehicle_from = geodesic.inv(stop_from.lon, stop_from.lat, vehicle_lon, vehicle_lat)
+                _, _, distance_vehicle_to = geodesic.inv(stop_to.lon, stop_to.lat, vehicle_lon, vehicle_lat)
+                _, _, distance_to_from = geodesic.inv(stop_from.lon, stop_from.lat, stop_to.lon, stop_to.lat)
+                inbetween = abs(distance_to_from - (distance_vehicle_from + distance_vehicle_to))
+                print(f'{inbetween} {stop_from.stop_id} {stop_to.stop_id} ')
+                if vehicle_id in closest_stop_pairs:
+                    if inbetween < closest_stop_pairs[vehicle_id]["inbetween"]:
+                        closest_stop_pairs[vehicle_id]["vehicle_location_snapshot"] = vehicle_location_snapshot
+                        closest_stop_pairs[vehicle_id]["stop_from"] = stop_from
+                        closest_stop_pairs[vehicle_id]["stop_to"] = stop_to
+                        closest_stop_pairs[vehicle_id]["inbetween"] = inbetween
+                else:
+                    closest_stop_pairs[vehicle_id] = {}
+                    closest_stop_pairs[vehicle_id]["vehicle_location_snapshot"] = vehicle_location_snapshot
+                    closest_stop_pairs[vehicle_id]["stop_from"] = stop_from
+                    closest_stop_pairs[vehicle_id]["stop_to"] = stop_to
+                    closest_stop_pairs[vehicle_id]["inbetween"] = inbetween
+    return closest_stop_pairs
 
 
 main()
-
