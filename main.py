@@ -1,3 +1,5 @@
+import csv
+
 import routeconfig_module
 import xml.etree.ElementTree as eT
 import pyproj
@@ -39,6 +41,18 @@ class VehicleLocationSnapshot:
         self.heading = heading
         self.speed_km_hr = speed_km_hr
         self.last_time = last_time
+
+    def __iter__(self):
+        return iter([self.vehicle_id,
+                     self.route_tag,
+                     self.dir_tag,
+                     self.lat,
+                     self.lon,
+                     self.secs_since_report,
+                     self.predictable,
+                     self.heading,
+                     self.speed_km_hr,
+                     self.last_time])
 
 
 def print_hi(name):
@@ -96,19 +110,38 @@ def main():
     last_update_time = '0'
     command = "vehicleLocations"
     route = "501"
-    delay = 10
-    for i in range(100):
-        print(f'i: {i}')
-        url = get_url_route_vehicle_locations(command, last_update_time, route)
-        response = requests.get(url, headers={"Content-Type": "application/json"})
-        xml = response.text
-        #print(f'{xml}')
-        root = eT.fromstring(xml)
-        vehicle_elements = root.findall("./vehicle")
-        print(f'{last_update_time} {len(vehicle_elements)}')
-        last_update_time = str(int(time.time()*1000)) #root.find("./lastTime").get("time")
-        time.sleep(delay)
+    delay = 20
+    file_period = 5*60*1000
+    while True:
+        vehicle_location_snapshots = []
+        start_update = None
+        i = 1
+        while True:
+            print(f'i: {i}')
+            i = i+1
+            url = get_url_route_vehicle_locations(command, last_update_time, route)
+            response = requests.get(url, headers={"Content-Type": "application/json"})
+            xml = response.text
+            # print(f'{xml}')
+            root = eT.fromstring(xml)
+            vehicle_elements = root.findall("./vehicle")
+            old_last_update_time = int(last_update_time)
+            last_update_time = root.find("./lastTime").get("time")
+            print(f'{(int(last_update_time)-old_last_update_time)/1000} {last_update_time} {len(vehicle_elements)}')
+            if start_update is None:
+                start_update = last_update_time
+            for vehicle_element in vehicle_elements:
+                vehicle_location_snapshot_obj = (
+                    make_vehicle_location_snapshot_from_element(last_update_time, vehicle_element))
+                vehicle_location_snapshots.append(vehicle_location_snapshot_obj)
+            if (int(last_update_time)-int(start_update)) > file_period:
+                break
+            time.sleep(delay)
 
+        filename = "c:/work/python/output/" + "vhs_"+route+"_"+start_update+"_"+last_update_time+".csv"
+        with open(filename, "w", newline='', encoding='utf-8') as stream:
+            writer = csv.writer(stream)
+            writer.writerows(vehicle_location_snapshots)
 
     # closest_stop_pairs = find_nearest_stops(xml, directions)
     #
@@ -119,6 +152,22 @@ def main():
     #     print(f'id:{vehicle_location_snapshot.vehicle_id} From:{stop_from.title} to To:{stop_to.title}')
 
     pass
+
+
+def make_vehicle_location_snapshot_from_element(last_update_time, vehicle_element):
+    return VehicleLocationSnapshot(
+        vehicle_id=vehicle_element.get("id"),
+        route_tag=vehicle_element.get("routeTag"),
+        dir_tag=vehicle_element.get("dirTag"),
+        lat=float(vehicle_element.get("lat")),
+        lon=float(vehicle_element.get("lon")),
+        secs_since_report=None if vehicle_element.get("secsSinceReport") is None else int(
+            vehicle_element.get("secsSinceReport")),
+        predictable=vehicle_element.get("predictable"),
+        heading=None if int(vehicle_element.get("heading")) < 0 else int(vehicle_element.get("heading")),
+        speed_km_hr=None if vehicle_element.get("speedKmHr") is None else int(vehicle_element.get("speedKmHr")),
+        last_time=int(last_update_time)
+    )
 
 
 def get_url_route_vehicle_locations(command, epoch_time, route):
