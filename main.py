@@ -177,7 +177,7 @@ def get_url_route_vehicle_locations(route, epoch_time):
 
 
 def get_url_route_config(route):
-    url = 'https://webservices.umoiq.com/service/publicXMLFeed?command=routeConfig&a=ttc&r=' + route
+    url = 'https://webservices.umoiq.com/service/publicXMLFeed?terse&command=routeConfig&a=ttc&r=' + route
     return url
 
 
@@ -269,6 +269,13 @@ def triangle_inequality(v_lat, v_lon, stop_from_lat, stop_from_lon, stop_to_lat,
 
 # main()
 
+def guess_if_stop_in_direction_tag(stop, direction_tag):
+    retval = False
+    if stop.tag == "3399" and direction_tag.startswith("501_0"):
+        retval = True
+    return retval
+
+
 def main2():
     # Press the green button in the gutter to run the script.
     if __name__ == '__main__':
@@ -291,26 +298,42 @@ def main2():
         for v in vehicle_location_snapshots:
             # if v.vehicle_id != "4582":
             #     continue
+            #print(f'{v.dir_tag}')
             if v.dir_tag is None:
                 continue
-            v_directions = [direction for direction in directions if direction.tag == v.dir_tag]
-            if len(v_directions) != 0:
-                v_direction = v_directions[0]
+            direction_found_bool = any(direction.tag == v.dir_tag for direction in directions)
+            before = None
+            if direction_found_bool:
+                v_direction = next(direction for direction in directions if direction.tag == v.dir_tag)
                 v_stops = v_direction.stops
                 if stop in v_stops:
-                    report_time = int(v.last_time / 1000) - v.secs_since_report
                     before = before_stop(stop, v_stops, v)
-                    row = {}
-                    row['id'] = v.vehicle_id
-                    row['time'] = report_time
-                    row['lat'] = v.lat
-                    row['lng'] = v.lon
-                    row['before'] = before
-                    row['dirTag'] = v.dir_tag
-                    print(json.dumps(row))
+                else:
+                    # stop is not in the vehicle's direction
+                    continue
             else:
-                print(f'Weird: no direction {v.dir_tag}, what direction is vehicle {v.vehicle_id}on? {v.lat},{v.lon}')
-                continue
+                in_direction = guess_if_stop_in_direction_tag(stop, v.dir_tag)
+                if not in_direction:
+                    continue
+                # unknown vehicle direction
+                # print(f'Weird: no direction {v.dir_tag}, what direction is vehicle {v.vehicle_id} on? {v.lat},{v.lon}')
+            report_time = int(v.last_time / 1000) - v.secs_since_report
+            state = "deadfish"
+            if before is None:
+                state = "unknown"
+            elif before:
+                state = "before"
+            else:
+                state = "after"
+
+            row = {}
+            row['id'] = v.vehicle_id
+            row['time'] = report_time
+            row['lat'] = v.lat
+            row['lng'] = v.lon
+            row['state'] = state
+            row['dirTag'] = v.dir_tag
+            print(json.dumps(row))
         time.sleep(delay)
 
 
@@ -370,7 +393,7 @@ def request_route_config(route):
     xml = response.text
     return xml
 
-pass #put break point so you can have console loaded
+
+pass  # put break point so you can have console loaded
 
 main2()
-
