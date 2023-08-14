@@ -35,17 +35,17 @@ class VehicleLocationSnapshot:
         self.speed_km_hr = speed_km_hr
         self.last_time = last_time
 
-    def __iter__(self):
-        return iter([self.vehicle_id,
-                     self.route_tag,
-                     self.dir_tag,
-                     self.lat,
-                     self.lon,
-                     self.secs_since_report,
-                     self.predictable,
-                     self.heading,
-                     self.speed_km_hr,
-                     self.last_time])
+    # def __iter__(self):
+    #     return iter([self.vehicle_id,
+    #                  self.route_tag,
+    #                  self.dir_tag,
+    #                  self.lat,
+    #                  self.lon,
+    #                  self.secs_since_report,
+    #                  self.predictable,
+    #                  self.heading,
+    #                  self.speed_km_hr,
+    #                  self.last_time])
 
 
 def print_stops(stops):
