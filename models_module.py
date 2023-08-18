@@ -1,74 +1,100 @@
+from __future__ import annotations
+
+from typing import List
+
+
+class Route:
+    def __init__(self, tag: str, title: str, latMin: float, latMax: float, lonMin: float, lonMax: float,
+                 paths: List[Path]):
+        self.tag = tag
+        self.title = title
+        self.latMin = latMin
+        self.latMax = latMax
+        self.lonMin = lonMin
+        self.lonMax = lonMax
+        self.paths = paths
+        self.stops = []
+        self.directions = []
+
+    def add_stops(self, stops: List[Stop]):
+        self.stops.extend(stops)
+
+    def add_directions(self, directions: List[Direction]):
+        self.directions.extend(directions)
+
+
+class Path:
+    def __init__(self, tags: List[Tag], points: List[Point]):
+        self.tags = tags
+        self.points = points
+
+
+class Tag:
+    def __init__(self, id: str):
+        self.id = id
+
+
+class Point:
+    def __init__(self, lat: float, lon: float):
+        self.lat = lat
+        self.lon = lon
 
 
 class Stop:
-    def __init__(self, tag, title, lat, lon, stop_id):
+    def __init__(self, tag: str, title: str, lat: float, lon: float, stopId: str):
         self.tag = tag
         self.title = title
         self.lat = lat
         self.lon = lon
-        self.stop_id = stop_id
+        self.stopId = stopId
+        self.directions = []
+        self.routes = []
+
+    def add_direction(self, direction: Direction):
+        self.directions.append(direction)
+
+    def add_route(self, route: Route):
+        self.routes.append(route)
 
 
 class Direction:
-    def __init__(self, tag, title, name, branch):
+    def __init__(self, route: Route, tag: str, title: str, name: str, branch: str, useForUI:bool, stops: List[Stop]):
+        self.route = route
         self.tag = tag
         self.title = title
         self.name = name
         self.branch = branch
-        self.stops = []
-
-    def add_stop(self, stop):
-        self.stops.append(stop)
+        self.stops = stops
+        self.useForUI = useForUI
 
 
 class VehicleLocationSnapshot:
-    def __init__(self, vehicle_id, route_tag, dir_tag, lat, lon, secs_since_report, predictable, heading, speed_km_hr,
-                 last_time):
-        self.vehicle_id = vehicle_id
-        self.route_tag = route_tag
-        self.dir_tag = dir_tag
+    def __init__(self, id: int, routeTag: str, dirTag: str, lat: float, lon: float, secsSinceReport: int, predictable,
+                 heading: float, speedKmHr: int, last_time: int):
+        self.id = id
+        self.routeTag = routeTag
+        self.dirTag = dirTag
         self.lat = lat
         self.lon = lon
-        self.secs_since_report = secs_since_report
+        self.secsSinceReport = secsSinceReport
         self.predictable = predictable
         self.heading = heading
-        self.speed_km_hr = speed_km_hr
+        self.speedKmHr = speedKmHr
         self.last_time = last_time
 
-    # def __iter__(self):
-    #     return iter([self.vehicle_id,
-    #                  self.route_tag,
-    #                  self.dir_tag,
-    #                  self.lat,
-    #                  self.lon,
-    #                  self.secs_since_report,
-    #                  self.predictable,
-    #                  self.heading,
-    #                  self.speed_km_hr,
-    #                  self.last_time])
 
-
-def print_stops(stops):
-    for stop in stops:
-        print("Tag:", stop.tag)
-        print("Title:", stop.title)
-        print("Latitude:", stop.lat)
-        print("Longitude:", stop.lon)
-        print("Stop ID:", stop.stop_id)
-        print("-----------------------")
-
-
-def make_vehicle_location_snapshot_from_element(last_update_time, vehicle_element):
-    return VehicleLocationSnapshot(
-        vehicle_id=vehicle_element.get("id"),
-        route_tag=vehicle_element.get("routeTag"),
-        dir_tag=vehicle_element.get("dirTag"),
-        lat=float(vehicle_element.get("lat")),
-        lon=float(vehicle_element.get("lon")),
-        secs_since_report=None if vehicle_element.get("secsSinceReport") is None else int(
-            vehicle_element.get("secsSinceReport")),
-        predictable=vehicle_element.get("predictable"),
-        heading=None if int(vehicle_element.get("heading")) < 0 else int(vehicle_element.get("heading")),
-        speed_km_hr=None if vehicle_element.get("speedKmHr") is None else int(vehicle_element.get("speedKmHr")),
-        last_time=int(last_update_time)
-    )
+def make_vehicle_location_snapshot_from_element(last_update_time: str, vehicle_element):
+    id = vehicle_element.get("id")
+    routeTag = vehicle_element.get("routeTag")
+    dirTag = vehicle_element.get("dirTag")
+    lat = float(vehicle_element.get("lat"))
+    lon = float(vehicle_element.get("lon"))
+    secsSinceReport = None if vehicle_element.get("secsSinceReport") is None else int(
+        vehicle_element.get("secsSinceReport"))
+    predictable = vehicle_element.get("predictable"),
+    heading = None if int(vehicle_element.get("heading")) < 0 else int(vehicle_element.get("heading"))
+    speedKmHr = None if vehicle_element.get("speedKmHr") is None else int(vehicle_element.get("speedKmHr"))
+    last_time = int(last_update_time)
+    vls = VehicleLocationSnapshot(id, routeTag, dirTag, lat, lon, secsSinceReport, predictable, heading, speedKmHr,
+                                  last_time)
+    return vls
