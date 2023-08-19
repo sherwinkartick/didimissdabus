@@ -33,15 +33,15 @@ class DaBlob:
             if route_tag not in self.__latest_vls:
                 self.__latest_vls[route_tag] = {}
 
-            route_map = self.__latest_vls[route_tag]
+            route_latest_vls = self.__latest_vls[route_tag]
             if dir_tag is None:
-                if v_id in route_map:
+                if v_id in route_latest_vls:
                     # print(f'deleting {v_id}')
-                    del route_map[v_id]
+                    del route_latest_vls[v_id]
             else:
                 # if v_id not in route_map:
                 #     print(f'adding {v_id}')
-                route_map[v_id] = vls
+                route_latest_vls[v_id] = vls
         return
 
     def get_latest(self, route_tag : str):

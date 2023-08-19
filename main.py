@@ -61,16 +61,32 @@ def output_direction_locations_json():
 
 def blob_update_vlss(route_tag: str, last_update_time: str):
     last_update_time, vehicle_location_snapshots = get_latest_vehicle_locations(last_update_time, route_tag)
+    # print(f'compeleted {route_tag} {len(vehicle_location_snapshots)}')
     blob.blob.add_vls(vehicle_location_snapshots)
-    return last_update_time
+    return route_tag, last_update_time
+
 
 def vehicleLocations_update_loop(route_tags : List[str]):
+    last_update_routes_time = 0
+    update_routes_delay = 15*60
     last_update_times = {}
     delay = 15
     for route_tag in route_tags:
         last_update_times[route_tag] = '0'
     while 1:
         start_time = int(time.time())
+        if (start_time - last_update_routes_time) > update_routes_delay:
+            # print(f'Updating routes {start_time}')
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = []
+                completed_futures: int = 0
+                for route_tag in route_tags:
+                    futures.append(executor.submit(blob_update_route, route_tag=route_tag))
+                for future in concurrent.futures.as_completed(futures):
+                    completed_futures += 1
+            last_update_routes_time = int(time.time())
+            # print(f'Finished updating routes {last_update_routes_time}')
+
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = []
             completed_futures: int = 0
@@ -79,12 +95,13 @@ def vehicleLocations_update_loop(route_tags : List[str]):
                                                last_update_time=last_update_times[route_tag]))
             for future in concurrent.futures.as_completed(futures):
                 completed_futures += 1
-                # print(f'compeleted {completed_futures}')
-                last_update_time = future.result()
-                last_update_times[route.tag] = last_update_time
+                # print(f'completed {completed_futures} vls futures')
+                route_tag, last_update_time = future.result()
+                # print(f'compeleted {route_tag} {blob.blob}')
+                last_update_times[route_tag] = last_update_time
         end_time = int(time.time())
         total_time = end_time - start_time
-        # print(f'{total_time}')
+        # print(f'Loop time: {total_time}')
         time.sleep(delay - total_time)
 
 
@@ -260,14 +277,6 @@ if __name__ == '__main__':
     routes = get_route_list()
     for route in routes:
         all_route_tags.append(route.tag)
-    print(len(all_route_tags))
-    # print('["'+'","'.join(all_route_tags) + '"]')
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = []
-        completed_futures: int = 0
-        for route_tag in all_route_tags:
-            futures.append(executor.submit(blob_update_route, route_tag=route_tag))
-        for future in concurrent.futures.as_completed(futures):
-            completed_futures += 1
-            # print(f'compeleted {completed_futures}')
+    # all_route_tags = ["301", "307", "501", "511"]
+    # all_route_tags = ["200"]
     main_loop()
