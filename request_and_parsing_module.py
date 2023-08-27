@@ -1,4 +1,3 @@
-import json
 import xml.etree.ElementTree as eT
 
 import requests
@@ -37,7 +36,7 @@ def extract_route_config(xml):
         paths.append(path)
     route = mm.Route(route_tag, route_title, route_latMin, route_latMax, route_lonMin, route_lonMax, paths)
 
-    stops = []
+    route_stops = []
     stops_tag = {}
     stop_elements = root.findall("./route/stop")
     for stop_element in stop_elements:
@@ -46,13 +45,12 @@ def extract_route_config(xml):
         stop_lat = float(stop_element.get("lat"))
         stop_lon = float(stop_element.get("lon"))
         stop_stopId = stop_element.get("stopId")
-        stop_obj = mm.Stop(stop_tag, stop_title, stop_lat, stop_lon, stop_stopId)
-        stop_obj.add_route(route)
+        stop_obj = mm.RouteStop(route, stop_tag, stop_title, stop_lat, stop_lon, stop_stopId)
         stops_tag[stop_tag] = stop_obj
-        stops.append(stop_obj)
-    route.add_stops(stops)
+        route_stops.append(stop_obj)
+    route.route_stops = route_stops
 
-    directions = []
+    route_directions = []
     direction_elements = root.findall("./route/direction")
     for direction_element in direction_elements:
         # print(f'Direction: {direction_element.get("tag")}')
@@ -62,16 +60,15 @@ def extract_route_config(xml):
         direction_branch = direction_element.get('branch')
         direction_useForUI = bool(direction_element.get('useForUI'))
         direction_stops_elements = direction_element.findall("./stop")
-        direction_stops=[]
+        direction_stops = []
         for direction_stops_element in direction_stops_elements:
             stop_tag = direction_stops_element.get('tag')
             direction_stop_obj = stops_tag[stop_tag]
             direction_stops.append(direction_stop_obj)
-        direction_obj = mm.Direction(route, direction_tag, direction_title, direction_name, direction_branch, direction_useForUI, direction_stops)
-        for direction_stop in direction_stops:
-            direction_stop.add_direction(direction_obj)
-        directions.append(direction_obj)
-    route.add_directions(directions)
+        direction_obj = mm.RouteDirection(route, direction_tag, direction_title, direction_name, direction_branch,
+                                          direction_useForUI, direction_stops)
+        route_directions.append(direction_obj)
+    route.route_directions = route_directions
 
     return route
 
@@ -79,7 +76,9 @@ def extract_route_config(xml):
 def extract_vehicle_location_snapshots(xml):
     root = eT.fromstring(xml)
     vehicle_elements = root.findall("./vehicle")
-    last_update_time = root.find("./lastTime").get("time")
+    lastTimeElement = root.find("./lastTime")
+    # print(f'{len(vehicle_elements)} {lastTimeElement is None}')
+    last_update_time = lastTimeElement.get("time")
     vehicle_locations_snapshots = []
     for vehicle_element in vehicle_elements:
         vehicle_locations_snapshot = mm.make_vehicle_location_snapshot_from_element(last_update_time, vehicle_element)
@@ -94,9 +93,10 @@ def extract_route_list(xml):
     for route_element in route_elements:
         route_tag = route_element.get("tag")
         route_title = route_element.get("title")
-        route = mm.Route(route_tag, route_title, None,None,None,None,None)
+        route = mm.Route(route_tag, route_title, 0.0, 0.0, 0.0, 0.0, [])
         routes.append(route)
     return routes
+
 
 def request_vehicle_locations(route, last_update_time):
     url = get_url_route_vehicle_locations(route, last_update_time)

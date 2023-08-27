@@ -44,7 +44,7 @@ def relative_position_to_stop(stop_of_interest, directions, vehicle):
         direction_found_bool = any(direction.tag == vehicle.dir_tag for direction in directions)
         if direction_found_bool:
             v_direction = next(direction for direction in directions if direction.tag == vehicle.dir_tag)
-            v_stops = v_direction.stops
+            v_stops = v_direction.route_stops
             if stop_of_interest in v_stops:
                 before = before_stop(stop_of_interest, v_stops, vehicle)
                 if before:

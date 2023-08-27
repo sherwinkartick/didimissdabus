@@ -1,8 +1,10 @@
 import concurrent
+from concurrent import futures
 import json
 import threading
 import time
 from typing import List
+from geopy import distance
 
 from flask import Flask, request
 from flask_cors import CORS
@@ -14,8 +16,6 @@ import statesman_module as blob
 
 app = Flask(__name__)
 CORS(app)
-
-all_route_tags: list[mm.Route] = []
 
 
 def output_direction_locations_json():
@@ -35,7 +35,6 @@ def output_direction_locations_json():
         for vls in vehicle_location_snapshots:
             relative_position_to_stop = mathy.relative_position_to_stop(stop, directions, vls)
             # print(f'{vls.vehicle_id} {vls.dir_tag} {relative_position_to_stop}')
-            state = None
             match relative_position_to_stop:
                 case "before_stop_of_interest":
                     state = "before"
@@ -66,43 +65,42 @@ def blob_update_vlss(route_tag: str, last_update_time: str):
     return route_tag, last_update_time
 
 
-def vehicleLocations_update_loop(route_tags : List[str]):
+def vehicleLocations_update_loop(all_route_tags: List[str], monitored_route_tags: List[str]):
     last_update_routes_time = 0
-    update_routes_delay = 15*60
+    update_routes_delay = 15 * 60
     last_update_times = {}
     delay = 15
-    for route_tag in route_tags:
-        last_update_times[route_tag] = '0'
+    for monitored_route_tag in monitored_route_tags:
+        last_update_times[monitored_route_tag] = '0'
     while 1:
         start_time = int(time.time())
         if (start_time - last_update_routes_time) > update_routes_delay:
-            # print(f'Updating routes {start_time}')
+            print(f'Updating routes {start_time}')
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = []
-                completed_futures: int = 0
-                for route_tag in route_tags:
-                    futures.append(executor.submit(blob_update_route, route_tag=route_tag))
-                for future in concurrent.futures.as_completed(futures):
-                    completed_futures += 1
+                futuresa = []
+                for route_tag in all_route_tags:
+                    futuresa.append(executor.submit(blob_update_route, route_tag=route_tag))
+                for _ in concurrent.futures.as_completed(futuresa):
+                    pass
+            blob.blob.init_stops()
             last_update_routes_time = int(time.time())
-            # print(f'Finished updating routes {last_update_routes_time}')
+            print(f'Finished updating routes {last_update_routes_time}')
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = []
-            completed_futures: int = 0
-            for route_tag in route_tags:
-                futures.append(executor.submit(blob_update_vlss, route_tag=route_tag,
-                                               last_update_time=last_update_times[route_tag]))
-            for future in concurrent.futures.as_completed(futures):
-                completed_futures += 1
-                # print(f'completed {completed_futures} vls futures')
-                route_tag, last_update_time = future.result()
-                # print(f'compeleted {route_tag} {blob.blob}')
-                last_update_times[route_tag] = last_update_time
+        if len(monitored_route_tags) > 0:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futuresa = []
+                for route_tag in monitored_route_tags:
+                    futuresa.append(executor.submit(blob_update_vlss, route_tag=route_tag,
+                                                    last_update_time=last_update_times[route_tag]))
+                for future in concurrent.futures.as_completed(futuresa):
+                    route_tag, last_update_time = future.result()
+                    last_update_times[route_tag] = last_update_time
+        print(f'Finished updating locations {time.ctime()}')
         end_time = int(time.time())
         total_time = end_time - start_time
         # print(f'Loop time: {total_time}')
-        time.sleep(delay - total_time)
+        if delay - total_time > 0:
+            time.sleep(delay - total_time)
 
 
 def routeConfig_update_loop(routes):
@@ -145,7 +143,7 @@ def get_route_details(route: str):
 def vls_to_api_dict(vls: mm.VehicleLocationSnapshot):
     report_time = int(vls.last_time / 1000) - vls.secsSinceReport
     row = {}
-    row['id'] = vls.id
+    row['id'] = vls.id_
     row['time'] = report_time
     row['lat'] = vls.lat
     row['lng'] = vls.lon
@@ -188,83 +186,71 @@ def routes_locations():
     return retval
 
 
-def stop_to_api_dict(stop: mm.Stop, route: mm.Route):
+def stop_to_api_dict(unique_stop: mm.UniqueStop):
     row = {}
-    row['tag'] = stop.tag
-    row['title'] = stop.title
-    row['lat'] = stop.lat
-    row['lng'] = stop.lon
-    row['stopId'] = stop.stopId
-    row['dirName'] = get_dir_name(stop)
-    row['routeTag'] = route.tag
+    row['tag'] = unique_stop.tag
+    row['title'] = unique_stop.title
+    row['lat'] = unique_stop.lat
+    row['lng'] = unique_stop.lon
+    # row['stopId'] = unique_stop.stopId
+    # row['dirName'] = unique_stop.route_directions[0].name
+    # row['routeTag'] = unique_stop.routes[0].tag
     return row
 
 
-def get_dir_name(stop: mm.Stop):
-    retval = stop.directions[0].name
-    for direction in stop.directions:
-        if retval != direction.name:
-            print(f'Weird issue with stop {stop.stopId}')
-    return stop.directions[0].name
-
-
-def get_route_tag(stop: mm.Stop):
-    retval = stop.routes[0].tag
-    for direction in stop.directions:
-        if retval != direction.name:
-            print(f'Weird issue with stop {stop.stopId}')
-    return stop.directions[0].name
+def get_dir_name(route_stop: mm.RouteStop):
+    retval = None
+    route : mm.Route = route_stop.route
+    route_direction: mm.RouteDirection
+    for route_direction in route.route_directions:
+        for route_direction_stop in route_direction.route_stops:
+            if route_direction_stop.tag == route_stop.tag:
+                retval = route_direction.name
+                return retval
+    return retval
 
 
 def print_stops(route_tags: List[str]):
     for route_tag in route_tags:
         route = blob.blob.get_route_by_tag(route_tag)
-        for stop in route.stops:
+        for stop in route.route_stops:
             row = stop_to_api_dict(stop, route)
             print(json.dumps(row))
 
 
 @app.route('/stops/<route>', methods=['GET'])
-def stops(route_tag):
+def route_stops(route_tag):
     route = blob.blob.get_route_by_tag(route_tag)
     stops_array = []
-    for stop in route.stops:
+    for stop in route.route_stops:
         row = stop_to_api_dict(stop, route)
         stops_array.append(row)
     retval = json.dumps(stops_array)
     return retval
 
 
-@app.route('/routes/stops', methods=['POST'])
-def routes_stops():
-    route_tags = request.get_json()
-    for route_tag in route_tags:
-        route = blob.blob.get_route_by_tag(route_tag)
-        stops_array = []
-        for stop in route.stops:
-            row = stop_to_api_dict(stop, route)
+@app.route('/stops/nearest', methods=['POST'])
+def stops_nearest():
+    stop_coord_json = request.get_json()
+    stop_coord = (stop_coord_json["lat"], stop_coord_json["lng"])
+    nearest_stops_to_coord = nearest_stops(stop_coord)
+    stops_array = []
+    for nearest_stop in nearest_stops_to_coord:
+        for route in nearest_stop.routes:
+            has_vehicles = False
+            if route.tag in blob.blob.latest_vls:
+                has_vehicles = True
+                break
+        if has_vehicles:
+            row = stop_to_api_dict(nearest_stop)
             stops_array.append(row)
     retval = json.dumps(stops_array)
     return retval
 
-
-def bigloop():
-    thread = threading.Thread(target=route_vehicle_locations_loop)
-    thread.start()
-    route = "501"
-    while 1:
-        print_locations(route)
-        time.sleep(30)
-
-
-def main_loop():
-    thread = threading.Thread(target=route_vehicle_locations_loop)
+def main_loop(all_route_tags: List[str], monitored_route_tags: List[str]):
+    thread = threading.Thread(target=vehicleLocations_update_loop, args=(all_route_tags, monitored_route_tags))
     thread.start()
     app.run(host='0.0.0.0')
-
-
-def route_vehicle_locations_loop():
-    vehicleLocations_update_loop(all_route_tags)
 
 
 def blob_update_route(route_tag: str):
@@ -273,10 +259,57 @@ def blob_update_route(route_tag: str):
     return
 
 
-if __name__ == '__main__':
+def main():
     routes = get_route_list()
+    all_route_tags = []
     for route in routes:
         all_route_tags.append(route.tag)
-    # all_route_tags = ["301", "307", "501", "511"]
-    # all_route_tags = ["200"]
-    main_loop()
+    monitored_route_tags = ["301", "307", "501", "511"]
+    main_loop(all_route_tags, monitored_route_tags)
+
+
+def module_stuff():
+    routes = get_route_list()
+    all_route_tags = []
+    for route in routes:
+        all_route_tags.append(route.tag)
+    monitored_route_tags = ["301", "307", "501", "511"]
+    thread = threading.Thread(target=vehicleLocations_update_loop, args=(all_route_tags, monitored_route_tags))
+    thread.start()
+    return
+
+
+def experiment():
+    module_stuff()
+    time.sleep(10)  # shit to start up
+    node = (43.647646, -79.406242)
+    stops = nearest_stops(node)
+    for stop in stops:
+        for route in stop.routes:
+            has_vehicles = False
+            if route.tag in blob.blob.latest_vls:
+                has_vehicles = True
+                break
+        if has_vehicles:
+            print(stop.title)
+
+
+
+def nearest_stops(coord, num_stops=10):
+    stops = blob.blob.unique_stops
+    unique_stop: mm.UniqueStop
+    distances = {}
+    for _, unique_stop in stops.items():
+        stop_distance = distance.distance(coord, (unique_stop.lat, unique_stop.lon)).m
+        distances[stop_distance] = unique_stop
+    min_distances = list(distances.keys())
+    min_distances.sort()
+    retval : List[mm.UniqueStop] = []
+    for i in range(0,num_stops):
+        retval.append(distances[min_distances[i]])
+    return retval
+
+
+if __name__ == '__main__':
+    main()
+    # experiment()
