@@ -1,12 +1,13 @@
 import concurrent
-from concurrent import futures
 import json
+import pickle
 import threading
 import time
+from concurrent import futures
 from typing import List
-from geopy import distance
 
-from flask import Flask, request
+import numpy as np
+from flask import Flask, request, make_response
 from flask_cors import CORS
 
 import mathy_module as mathy
@@ -18,50 +19,18 @@ app = Flask(__name__)
 CORS(app)
 
 
-def output_direction_locations_json():
-    route = "501"
-    stop_tag = "3399"
-    directions, stops = get_route_details(route)
-    stop = get_stop_from_directions(stop_tag, stops)
-    print(f'{stop.title}')
-
-    last_update_time = '0'
-    delay = 20
-
-    for i in range(100):
-        xml = rpm.request_vehicle_locations(route, last_update_time)
-        last_update_time, vehicle_location_snapshots = rpm.extract_vehicle_location_snapshots(xml)
-
-        for vls in vehicle_location_snapshots:
-            relative_position_to_stop = mathy.relative_position_to_stop(stop, directions, vls)
-            # print(f'{vls.vehicle_id} {vls.dir_tag} {relative_position_to_stop}')
-            match relative_position_to_stop:
-                case "before_stop_of_interest":
-                    state = "before"
-                case "after_stop_of_interest":
-                    state = "after"
-                case "vrd_unknown_stop_of_interest_may_be_on_vrd":
-                    state = "unknown"
-                case _:
-                    continue
-
-            report_time = int(vls.last_time / 1000) - vls.secs_since_report
-
-            row = {}
-            row['id'] = vls.vehicle_id
-            row['time'] = report_time
-            row['lat'] = vls.lat
-            row['lng'] = vls.lon
-            row['state'] = state
-            row['dirTag'] = vls.dir_tag
-            print(json.dumps(row))
-        time.sleep(delay)
+@app.after_request
+def after_request_func(data):
+    response = make_response(data)
+    response.headers['Content-Type'] = 'application/json'
+    return response
 
 
 def blob_update_vlss(route_tag: str, last_update_time: str):
     last_update_time, vehicle_location_snapshots = get_latest_vehicle_locations(last_update_time, route_tag)
     # print(f'compeleted {route_tag} {len(vehicle_location_snapshots)}')
     blob.blob.add_vls(vehicle_location_snapshots)
+    blob.blob.update_direction_vls(route_tag)
     return route_tag, last_update_time
 
 
@@ -83,8 +52,7 @@ def vehicleLocations_update_loop(all_route_tags: List[str], monitored_route_tags
                 for _ in concurrent.futures.as_completed(futuresa):
                     pass
             blob.blob.init_stops()
-            last_update_routes_time = int(time.time())
-            print(f'Finished updating routes {last_update_routes_time}')
+            last_update_routes_time = int(time.time())  # print(f'Finished updating routes {last_update_routes_time}')
 
         if len(monitored_route_tags) > 0:
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -95,26 +63,12 @@ def vehicleLocations_update_loop(all_route_tags: List[str], monitored_route_tags
                 for future in concurrent.futures.as_completed(futuresa):
                     route_tag, last_update_time = future.result()
                     last_update_times[route_tag] = last_update_time
-        print(f'Finished updating locations {time.ctime()}')
+        # print(f'Finished updating locations {time.ctime()}')
         end_time = int(time.time())
         total_time = end_time - start_time
         # print(f'Loop time: {total_time}')
         if delay - total_time > 0:
             time.sleep(delay - total_time)
-
-
-def routeConfig_update_loop(routes):
-    last_update_times = {}
-    delay = 30
-    for route in routes:
-        last_update_times[route] = '0'
-    while 1:
-        for route in routes:
-            last_update_time, vehicle_location_snapshots = get_latest_vehicle_locations(last_update_times[route], route)
-            # print(f'{route} {len(vehicle_location_snapshots)}')
-            last_update_times[route] = last_update_time
-            blob.blob.add_vls(vehicle_location_snapshots)
-        time.sleep(delay)
 
 
 def get_route_list():
@@ -155,6 +109,13 @@ def vls_to_api_dict(vls: mm.VehicleLocationSnapshot):
     return row
 
 
+def point_to_api_dict(point: mm.Point):
+    row = {}
+    row['lat'] = point.lat
+    row['lng'] = point.lon
+    return row
+
+
 def print_locations(route):
     vlss = blob.blob.get_latest(route)
     for vls in vlss:
@@ -162,22 +123,11 @@ def print_locations(route):
         print(json.dumps(row))
 
 
-@app.route('/locations/<route>', methods=['GET'])
-def locations(route):
-    vlss = blob.blob.get_latest(route)
-    locations_array = []
-    for vls in vlss:
-        row = vls_to_api_dict(vls)
-        locations_array.append(row)  # print(json.dumps(row))
-    retval = json.dumps(locations_array)
-    return retval
-
-
 @app.route('/routes/locations', methods=['POST'])
 def routes_locations():
-    routes = request.get_json()
+    request_json = request.get_json()
     locations_array = []
-    for route in routes:
+    for route in request_json:
         vlss = blob.blob.get_latest(route)
         for vls in vlss:
             row = vls_to_api_dict(vls)
@@ -186,7 +136,41 @@ def routes_locations():
     return retval
 
 
-def stop_to_api_dict(unique_stop: mm.UniqueStop):
+@app.route('/route/direction/locations', methods=['POST'])
+def route_directions_locations():
+    request_json = request.get_json()
+    route_tag = request_json["route_tag"]
+    route_direction_tag = request_json["direction_tag"]
+    latest_direction_vls = blob.blob.latest_direction_vls[route_tag]
+    vlss = latest_direction_vls[route_direction_tag]
+    locations_array = []
+    for vls in vlss:
+        row = vls_to_api_dict(vls)
+        locations_array.append(row)
+    retval = json.dumps(locations_array)
+    return retval
+
+
+@app.route('/route/direction/stops', methods=['POST'])
+def route_direction_stops():
+    request_json = request.get_json()
+    route_tag = request_json["route_tag"]
+    route_direction_tag = request_json["direction_tag"]
+    stops_array = []
+    route: mm.Route = blob.blob.get_route_by_tag(route_tag)
+    route_direction: mm.RouteDirection
+    for route_direction in route.route_directions:
+        if route_direction.tag != route_direction_tag:
+            continue
+        for route_stop in route_direction.route_stops:
+            row = stop_to_api_dict(route_stop)
+            # print(json.dumps(row))
+            stops_array.append(row)
+    retval = json.dumps(stops_array)
+    return retval
+
+
+def stop_to_api_dict(unique_stop):
     row = {}
     row['tag'] = unique_stop.tag
     row['title'] = unique_stop.title
@@ -198,54 +182,119 @@ def stop_to_api_dict(unique_stop: mm.UniqueStop):
     return row
 
 
-def get_dir_name(route_stop: mm.RouteStop):
-    retval = None
-    route : mm.Route = route_stop.route
-    route_direction: mm.RouteDirection
-    for route_direction in route.route_directions:
-        for route_direction_stop in route_direction.route_stops:
-            if route_direction_stop.tag == route_stop.tag:
-                retval = route_direction.name
-                return retval
-    return retval
-
-
-def print_stops(route_tags: List[str]):
-    for route_tag in route_tags:
-        route = blob.blob.get_route_by_tag(route_tag)
-        for stop in route.route_stops:
-            row = stop_to_api_dict(stop, route)
-            print(json.dumps(row))
-
-
-@app.route('/stops/<route>', methods=['GET'])
-def route_stops(route_tag):
-    route = blob.blob.get_route_by_tag(route_tag)
-    stops_array = []
-    for stop in route.route_stops:
-        row = stop_to_api_dict(stop, route)
-        stops_array.append(row)
-    retval = json.dumps(stops_array)
-    return retval
-
-
 @app.route('/stops/nearest', methods=['POST'])
 def stops_nearest():
-    stop_coord_json = request.get_json()
-    stop_coord = (stop_coord_json["lat"], stop_coord_json["lng"])
-    nearest_stops_to_coord = nearest_stops(stop_coord)
-    stops_array = []
+    request_json = request.get_json()
+    stop_coord = (request_json["lat"], request_json["lng"])
+    nearest_stops_to_coord = stops_nearest_coord(stop_coord, 30)
+    useful_stops = []
     for nearest_stop in nearest_stops_to_coord:
+        has_vehicles = False
         for route in nearest_stop.routes:
-            has_vehicles = False
             if route.tag in blob.blob.latest_vls:
                 has_vehicles = True
                 break
         if has_vehicles:
-            row = stop_to_api_dict(nearest_stop)
+            useful_stops.append(nearest_stop)
+    keycount = 0
+    number2 = {}
+    for stop in useful_stops:
+        useful_directions = []
+        for route_direction in stop.route_directions:
+            if route_direction.route.tag in blob.blob.latest_vls:
+                if route_direction.tag in blob.blob.latest_direction_vls[route_direction.route.tag]:
+                    if stop.tag != route_direction.route_stops[-1].tag:
+                        useful_directions.append(route_direction)
+        key = ",".join(sorted(direction.tag for direction in useful_directions))
+        if key not in number2:
+            number2[key] = []
+            keycount += 1
+        number2[key].append(stop)
+        if keycount == 9:
+            break
+    stops_array = []
+    for key in number2:
+        for stop in number2[key]:
+            row = stop_to_api_dict(stop)
+            row['direction_group'] = key
             stops_array.append(row)
     retval = json.dumps(stops_array)
     return retval
+
+
+@app.route('/stop/vehicles/before/<stop_tag>', methods=['GET'])
+def stop_vehicles_before(stop_tag):
+    unique_stop = blob.blob.unique_stops[stop_tag]
+    routes = unique_stop.routes
+    useful = []
+    # print(", ".join(direction.tag for direction in unique_stop.route_directions))
+    # print()
+    for route in routes:
+        vlss: List[mm.VehicleLocationSnapshot]
+        if route.tag not in blob.blob.latest_vls:
+            continue
+        vlss = blob.blob.latest_vls[route.tag].values()
+        for vls in vlss:
+            # print(f'{vls.id_} {vls.dirTag}')
+            route_direction = next(
+                (direction for direction in unique_stop.route_directions if direction.tag == vls.dirTag), None)
+            if route_direction is not None:
+                if route_direction.route_stops[-1].tag != unique_stop.tag:
+                    useful.append(vls)
+    locations_array = []
+    for useful_vehicle in useful:
+        before, num_stops_away = mathy.before_stop_and_by_how_many(unique_stop, useful_vehicle)
+        if before == "before_stop":
+            # print(f'{useful_vehicle.id_} {useful_vehicle.dirTag} {before} {num_stops_away}')
+            row = vls_to_api_dict(useful_vehicle)
+            # print(row)
+            row["number_stops_away"] = num_stops_away
+            locations_array.append(row)
+    retval = json.dumps(locations_array)
+    # print(retval)
+    return retval
+
+
+@app.route('/route/direction/path', methods=['POST'])
+def route_direction_path():
+    request_json = request.get_json()
+    route_tag = request_json["route_tag"]
+    route_direction_tag = request_json["direction_tag"]
+    route: mm.Route = blob.blob.get_route_by_tag(route_tag)
+    points = []
+    for path in route.paths:
+        for tag in path.tags:
+            if tag.id_.startswith(route_direction_tag + '_'):
+                points.append(path.points)
+    points_array = []
+    for i in range(len(points)):
+        for point in points[i]:
+            row = point_to_api_dict(point)
+            row['index'] = i
+            points_array.append(row)
+    retval = json.dumps(points_array)
+    print(retval)
+    return retval
+
+
+def stops_nearest_coord(coord, num_stops=10):
+    retval: List[mm.UniqueStop] = []
+    if blob.blob.ball_tree is None:
+        return retval
+    lat = float(coord[0]) * np.pi / 180
+    lon = float(coord[1]) * np.pi / 180
+    distances, indices = blob.blob.ball_tree.query(np.array([[lat, lon]]), k=num_stops)
+    unique_stops = list(blob.blob.unique_stops.values())
+    i = 0
+    for index in indices[0]:
+        distance_to_stop = distances[0][i] * 6371
+        i += 1
+        if distance_to_stop > 1:
+            continue
+        retval.append(unique_stops[index])
+
+    return retval
+
 
 def main_loop(all_route_tags: List[str], monitored_route_tags: List[str]):
     thread = threading.Thread(target=vehicleLocations_update_loop, args=(all_route_tags, monitored_route_tags))
@@ -279,37 +328,22 @@ def module_stuff():
     return
 
 
-def experiment():
+def save_state():
     module_stuff()
     time.sleep(10)  # shit to start up
-    node = (43.647646, -79.406242)
-    stops = nearest_stops(node)
-    for stop in stops:
-        for route in stop.routes:
-            has_vehicles = False
-            if route.tag in blob.blob.latest_vls:
-                has_vehicles = True
-                break
-        if has_vehicles:
-            print(stop.title)
+    with open('data.pkl', 'wb') as file:
+        pickle.dump(blob.blob, file)
+    return
 
 
-
-def nearest_stops(coord, num_stops=10):
-    stops = blob.blob.unique_stops
-    unique_stop: mm.UniqueStop
-    distances = {}
-    for _, unique_stop in stops.items():
-        stop_distance = distance.distance(coord, (unique_stop.lat, unique_stop.lon)).m
-        distances[stop_distance] = unique_stop
-    min_distances = list(distances.keys())
-    min_distances.sort()
-    retval : List[mm.UniqueStop] = []
-    for i in range(0,num_stops):
-        retval.append(distances[min_distances[i]])
-    return retval
+def experiment():
+    with open('data.pkl', 'rb') as file:
+        blob.blob = pickle.load(file)
+    route_tag = "501"
+    dir_tag = "501_0_501Bbus"
+    # points_for_direction(dir_tag, route_tag)
+    return
 
 
 if __name__ == '__main__':
-    main()
-    # experiment()
+    main()  # save_state()  # experiment()

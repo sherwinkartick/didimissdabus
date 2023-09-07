@@ -1,8 +1,10 @@
 import time
-from typing import List, Dict
+from typing import List
 
 import models_module as mm
 from models_module import VehicleLocationSnapshot, UniqueStop
+from sklearn.neighbors import BallTree
+import numpy as np
 
 
 class DaBlob:
@@ -10,8 +12,10 @@ class DaBlob:
     def __init__(self):
         self.unique_stops = None
         self.latest_vls = {}
+        self.latest_direction_vls = {}
         self.__routes = {}
         self.__direction_tag = {}
+        self.ball_tree = None
 
     def add_route(self, route: mm.Route):
         self.__routes[route.tag] = route
@@ -43,6 +47,13 @@ class DaBlob:
                             unique_stop.add_route_direction(route_direction)
                             break
         self.unique_stops = unique_stops
+        unique_stops_array = list(unique_stops.values())
+        latitudes = np.array([obj.lat for obj in unique_stops_array])
+        latitudes *= np.pi / 180
+        longitudes = np.array([obj.lon for obj in unique_stops_array])
+        longitudes *= np.pi / 180
+        coordinates = np.column_stack((latitudes, longitudes))
+        self.ball_tree = BallTree(coordinates, metric='haversine')
         return
 
     def add_vls(self, vlss: List[mm.VehicleLocationSnapshot]):
@@ -65,6 +76,7 @@ class DaBlob:
                 # if v_id not in route_map:
                 #     print(f'adding {v_id}')
                 route_latest_vls[v_id] = vls
+
         return
 
     def get_latest(self, route_tag : str):
@@ -95,6 +107,17 @@ class DaBlob:
     def get_route_by_tag(self, routeTag:str):
         route = self.__routes[routeTag]
         return route
+
+    def update_direction_vls(self, routeTag):
+        new_latest_direction_vls = {}
+        if routeTag not in self.latest_vls:
+            return
+        vlss: List[mm.VehicleLocationSnapshot] = self.latest_vls[routeTag].values()
+        for vls in vlss:
+            if vls.dirTag not in new_latest_direction_vls:
+                new_latest_direction_vls[vls.dirTag] = []
+            new_latest_direction_vls[vls.dirTag].append(vls)
+        self.latest_direction_vls[routeTag] = new_latest_direction_vls
 
 
 blob = DaBlob()

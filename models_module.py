@@ -79,7 +79,7 @@ class UniqueStop:
         self.lon = lon
         self.stopId = stopId
         self.routes = []
-        self.route_directions = []
+        self.route_directions: List[RouteDirection] = []
 
     def add_route(self, route: Route):
         self.routes.append(route)
