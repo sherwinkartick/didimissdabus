@@ -71,6 +71,45 @@ def vehicleLocations_update_loop(all_route_tags: List[str], monitored_route_tags
             time.sleep(delay - total_time)
 
 
+def vehicleLocations_expire_loop(all_route_tags: List[str], monitored_route_tags: List[str]):
+    delay = 15
+    expiry_secs = 120
+    while 1:
+        start_time = int(time.time())
+        print(f'Expiring: {start_time}')
+        a: dict[str, dict[str, mm.VehicleLocationSnapshot]]
+        for a in blob.blob.latest_vls.values():
+            b: mm.VehicleLocationSnapshot
+            for b in list(a.values()):
+                report_time = int(b.last_time / 1000) - b.secsSinceReport
+                delta_time = int(time.time()) - report_time
+                if delta_time > expiry_secs:
+                    print(f'Removing {b.id_} {delta_time}')
+                    del a[str(b.id_)]
+                # else:
+                #     print(f'Not Removing {b.id_} {delta_time}')
+
+        c: dict[str, List[mm.VehicleLocationSnapshot]]
+        for c in blob.blob.latest_direction_vls.values():
+            d: List[mm.VehicleLocationSnapshot]
+            for d in c.values():
+                e:mm.VehicleLocationSnapshot
+                for e in list(d):
+                    report_time = int(e.last_time / 1000) - e.secsSinceReport
+                    delta_time = int(time.time()) - report_time
+                    if delta_time > expiry_secs:
+                        print(f'direction Removing {e.id_} {delta_time}')
+                        d.remove(e)
+                    # else:
+                    #     print(f'direction Not Removing {e.id_} {delta_time}')
+
+
+        end_time = int(time.time())
+        total_time = end_time - start_time
+        if delay - total_time > 0:
+            time.sleep(delay - total_time)
+
+
 def get_route_list():
     xml = rpm.request_route_list()
     routes = rpm.extract_route_list(xml)
@@ -124,7 +163,7 @@ def print_locations(route):
 
 
 @app.route('/routes/locations', methods=['POST'])
-def routes_locations():
+def app_routes_locations():
     request_json = request.get_json()
     locations_array = []
     for route in request_json:
@@ -137,7 +176,7 @@ def routes_locations():
 
 
 @app.route('/route/direction/locations', methods=['POST'])
-def route_directions_locations():
+def app_route_directions_locations():
     request_json = request.get_json()
     route_tag = request_json["route_tag"]
     route_direction_tag = request_json["direction_tag"]
@@ -152,7 +191,7 @@ def route_directions_locations():
 
 
 @app.route('/route/direction/stops', methods=['POST'])
-def route_direction_stops():
+def app_route_direction_stops():
     request_json = request.get_json()
     route_tag = request_json["route_tag"]
     route_direction_tag = request_json["direction_tag"]
@@ -183,19 +222,22 @@ def stop_to_api_dict(unique_stop):
 
 
 @app.route('/stops/nearest', methods=['POST'])
-def stops_nearest():
+def app_stops_nearest():
     request_json = request.get_json()
     stop_coord = (request_json["lat"], request_json["lng"])
-    nearest_stops_to_coord = stops_nearest_coord(stop_coord, 30)
+
+    nearest_stops_to_coord = ball_query_stops_nearest_coord(stop_coord, 30)
     useful_stops = []
     for nearest_stop in nearest_stops_to_coord:
         has_vehicles = False
         for route in nearest_stop.routes:
             if route.tag in blob.blob.latest_vls:
-                has_vehicles = True
+                for vls in blob.blob.latest_vls[route.tag]:
+                    if any(vls.dirTag == route_direction.tag for route_direction in nearest_stop.route_directions):
+                        has_vehicles = True
+            if has_vehicles:
+                useful_stops.append(nearest_stop)
                 break
-        if has_vehicles:
-            useful_stops.append(nearest_stop)
     keycount = 0
     number2 = {}
     for stop in useful_stops:
@@ -222,8 +264,40 @@ def stops_nearest():
     return retval
 
 
+def nearest_useful_stops(stop_coord):
+    nearest_stops_to_coord = ball_query_stops_nearest_coord(stop_coord, 30)
+    useful_stops = []
+    for nearest_stop in nearest_stops_to_coord:
+        has_vehicles = False
+        for route in nearest_stop.routes:
+            if route.tag in blob.blob.latest_vls:
+                for vls in blob.blob.latest_vls[route.tag].values():
+                    # print(f'{vls.id_} stop tag:{nearest_stop.tag} vehicle last stop tag {blob.blob.get_direction_by_tag(vls.dirTag).route_stops[-1].tag}')
+                    if nearest_stop.tag == blob.blob.get_direction_by_tag(vls.dirTag).route_stops[-1].tag:
+                        continue
+                    if any(vls.dirTag == route_direction.tag for route_direction in nearest_stop.route_directions):
+                        # print(f'{vls.id_} {vls.dirTag} {",".join(route_direction.tag for route_direction in nearest_stop.route_directions)}')
+                        has_vehicles = True
+                        break
+            if has_vehicles:
+                useful_stops.append(nearest_stop)
+                break
+    return useful_stops
+
+
+def useful_directions_for_stop(unique_stop:mm.UniqueStop):
+    useful_directions = []
+    for direction in unique_stop.route_directions:
+        if direction.route.tag not in blob.blob.latest_direction_vls:
+            continue
+        route_dict = blob.blob.latest_direction_vls[direction.route.tag]
+        if direction.tag in route_dict:
+            useful_directions.append(direction)
+    return useful_directions
+
+
 @app.route('/stop/vehicles/before/<stop_tag>', methods=['GET'])
-def stop_vehicles_before(stop_tag):
+def app_stop_vehicles_before(stop_tag):
     unique_stop = blob.blob.unique_stops[stop_tag]
     routes = unique_stop.routes
     useful = []
@@ -256,7 +330,7 @@ def stop_vehicles_before(stop_tag):
 
 
 @app.route('/route/direction/path', methods=['POST'])
-def route_direction_path():
+def app_route_direction_path():
     request_json = request.get_json()
     route_tag = request_json["route_tag"]
     route_direction_tag = request_json["direction_tag"]
@@ -277,7 +351,7 @@ def route_direction_path():
     return retval
 
 
-def stops_nearest_coord(coord, num_stops=10):
+def ball_query_stops_nearest_coord(coord, num_stops=10):
     retval: List[mm.UniqueStop] = []
     if blob.blob.ball_tree is None:
         return retval
@@ -292,13 +366,14 @@ def stops_nearest_coord(coord, num_stops=10):
         if distance_to_stop > 1:
             continue
         retval.append(unique_stops[index])
-
     return retval
 
 
 def main_loop(all_route_tags: List[str], monitored_route_tags: List[str]):
-    thread = threading.Thread(target=vehicleLocations_update_loop, args=(all_route_tags, monitored_route_tags))
-    thread.start()
+    thread1 = threading.Thread(target=vehicleLocations_update_loop, args=(all_route_tags, monitored_route_tags))
+    thread1.start()
+    thread2 = threading.Thread(target=vehicleLocations_expire_loop, args=(all_route_tags, monitored_route_tags))
+    thread2.start()
     app.run(host='0.0.0.0')
 
 
@@ -339,11 +414,32 @@ def save_state():
 def experiment():
     with open('data.pkl', 'rb') as file:
         blob.blob = pickle.load(file)
-    route_tag = "501"
-    dir_tag = "501_0_501Bbus"
-    # points_for_direction(dir_tag, route_tag)
+    coord = (43.64763175446401,-79.40623827336564)
+    unique_stops = nearest_useful_stops(coord)
+    direction_dict = {}
+    for unique_stop in unique_stops:
+        row = stop_to_api_dict(unique_stop)
+        useful_directions = useful_directions_for_stop(unique_stop)
+        route_directions_row = []
+        for useful_direction in useful_directions:
+            route_direction_row = {}
+            route_direction_row['route_tag'] = useful_direction.route.tag
+            route_direction_row['direction_tag'] = useful_direction.tag
+            route_directions_row.append(route_direction_row)
+        row['route_directions'] = route_directions_row
+        key = ",".join(sorted(direction.tag for direction in useful_directions))
+        if key not in direction_dict:
+            direction_dict[key] = []
+        direction_dict[key].append(row)
+        if len(direction_dict) == 9:
+            break
+    for key in direction_dict:
+        for api_stop in direction_dict[key]:
+            print(json.dumps(api_stop))
     return
 
 
 if __name__ == '__main__':
-    main()  # save_state()  # experiment()
+    # main()
+    # save_state()
+    experiment()

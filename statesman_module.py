@@ -110,7 +110,7 @@ class DaBlob:
 
     def update_direction_vls(self, routeTag):
         new_latest_direction_vls = {}
-        if routeTag not in self.latest_vls:
+        if routeTag not in self.latest_vls: # this check is needed, dunno why though
             return
         vlss: List[mm.VehicleLocationSnapshot] = self.latest_vls[routeTag].values()
         for vls in vlss:

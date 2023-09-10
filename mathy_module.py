@@ -4,7 +4,6 @@ from geopy import distance
 
 import models_module as mm
 
-
 def before_stop(stop: mm.RouteStop, stops: List[mm.RouteStop], vehicle_location_snapshot: mm.VehicleLocationSnapshot):
     v = vehicle_location_snapshot
     v_lat = v.lat
