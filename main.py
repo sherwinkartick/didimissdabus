@@ -221,8 +221,8 @@ def stop_to_api_dict(unique_stop):
     return row
 
 
-@app.route('/stops/nearest', methods=['POST'])
-def app_stops_nearest():
+@app.route('/stops/nearest2', methods=['POST'])
+def app_stops_nearests():
     request_json = request.get_json()
     stop_coord = (request_json["lat"], request_json["lng"])
 
@@ -263,6 +263,36 @@ def app_stops_nearest():
     retval = json.dumps(stops_array)
     return retval
 
+
+@app.route('/stops/nearest', methods=['POST'])
+def app_stops_nearest():
+    request_json = request.get_json()
+    coord = (request_json["lat"], request_json["lng"])
+    unique_stops = nearest_useful_stops(coord)
+    direction_dict = {}
+    for unique_stop in unique_stops:
+        row = stop_to_api_dict(unique_stop)
+        useful_directions = useful_directions_for_stop(unique_stop)
+        route_directions_row = []
+        for useful_direction in useful_directions:
+            route_direction_row = {}
+            route_direction_row['route_tag'] = useful_direction.route.tag
+            route_direction_row['direction_tag'] = useful_direction.tag
+            route_directions_row.append(route_direction_row)
+        row['route_directions'] = route_directions_row
+        key = ",".join(sorted(direction.tag for direction in useful_directions))
+        # row['direction_group'] = key
+        if key not in direction_dict:
+            direction_dict[key] = []
+        direction_dict[key].append(row)
+        if len(direction_dict) == 9:
+            break
+    stops_array = []
+    for key in direction_dict:
+        for api_stop in direction_dict[key]:
+            stops_array.append(api_stop)
+    retval = json.dumps(stops_array)
+    return retval
 
 def nearest_useful_stops(stop_coord):
     nearest_stops_to_coord = ball_query_stops_nearest_coord(stop_coord, 30)
@@ -428,6 +458,7 @@ def experiment():
             route_directions_row.append(route_direction_row)
         row['route_directions'] = route_directions_row
         key = ",".join(sorted(direction.tag for direction in useful_directions))
+        # row['direction_group'] = key
         if key not in direction_dict:
             direction_dict[key] = []
         direction_dict[key].append(row)
@@ -440,6 +471,6 @@ def experiment():
 
 
 if __name__ == '__main__':
-    # main()
+    main()
     # save_state()
-    experiment()
+    # experiment()
