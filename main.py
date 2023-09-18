@@ -221,49 +221,6 @@ def stop_to_api_dict(unique_stop):
     return row
 
 
-@app.route('/stops/nearest2', methods=['POST'])
-def app_stops_nearests():
-    request_json = request.get_json()
-    stop_coord = (request_json["lat"], request_json["lng"])
-
-    nearest_stops_to_coord = ball_query_stops_nearest_coord(stop_coord, 30)
-    useful_stops = []
-    for nearest_stop in nearest_stops_to_coord:
-        has_vehicles = False
-        for route in nearest_stop.routes:
-            if route.tag in blob.blob.latest_vls:
-                for vls in blob.blob.latest_vls[route.tag]:
-                    if any(vls.dirTag == route_direction.tag for route_direction in nearest_stop.route_directions):
-                        has_vehicles = True
-            if has_vehicles:
-                useful_stops.append(nearest_stop)
-                break
-    keycount = 0
-    number2 = {}
-    for stop in useful_stops:
-        useful_directions = []
-        for route_direction in stop.route_directions:
-            if route_direction.route.tag in blob.blob.latest_vls:
-                if route_direction.tag in blob.blob.latest_direction_vls[route_direction.route.tag]:
-                    if stop.tag != route_direction.route_stops[-1].tag:
-                        useful_directions.append(route_direction)
-        key = ",".join(sorted(direction.tag for direction in useful_directions))
-        if key not in number2:
-            number2[key] = []
-            keycount += 1
-        number2[key].append(stop)
-        if keycount == 9:
-            break
-    stops_array = []
-    for key in number2:
-        for stop in number2[key]:
-            row = stop_to_api_dict(stop)
-            row['direction_group'] = key
-            stops_array.append(row)
-    retval = json.dumps(stops_array)
-    return retval
-
-
 @app.route('/stops/nearest', methods=['POST'])
 def app_stops_nearest():
     request_json = request.get_json()
@@ -319,6 +276,8 @@ def useful_directions_for_stop(unique_stop:mm.UniqueStop):
     useful_directions = []
     for direction in unique_stop.route_directions:
         if direction.route.tag not in blob.blob.latest_direction_vls:
+            continue
+        if unique_stop.tag == direction.route_stops[-1].tag:
             continue
         route_dict = blob.blob.latest_direction_vls[direction.route.tag]
         if direction.tag in route_dict:
@@ -376,8 +335,8 @@ def app_route_direction_path():
             row = point_to_api_dict(point)
             row['index'] = i
             points_array.append(row)
+            # print(json.dumps(row))
     retval = json.dumps(points_array)
-    print(retval)
     return retval
 
 
@@ -393,7 +352,7 @@ def ball_query_stops_nearest_coord(coord, num_stops=10):
     for index in indices[0]:
         distance_to_stop = distances[0][i] * 6371
         i += 1
-        if distance_to_stop > 1:
+        if distance_to_stop > 1:  # limit to 1km radius, probably should make a parameter
             continue
         retval.append(unique_stops[index])
     return retval
@@ -462,7 +421,7 @@ def experiment():
         if key not in direction_dict:
             direction_dict[key] = []
         direction_dict[key].append(row)
-        if len(direction_dict) == 9:
+        if len(direction_dict) == 8:
             break
     for key in direction_dict:
         for api_stop in direction_dict[key]:
