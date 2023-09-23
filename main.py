@@ -376,8 +376,8 @@ def main():
     all_route_tags = []
     for route in routes:
         all_route_tags.append(route.tag)
-    monitored_route_tags = ["301", "307", "501", "511"]
-    main_loop(all_route_tags, monitored_route_tags)
+    monitored_route_tags = ["301", "307", "501", "511", "504"]
+    main_loop(all_route_tags, all_route_tags)
 
 
 def module_stuff():
