@@ -1,12 +1,26 @@
 import xml.etree.ElementTree as eT
-
 import requests
-
 import models_module as mm
+import datetime
+import sys
 
+strings = []
+
+def process_string(new_string):
+    global strings
+    # Get the current time
+    current_time = datetime.datetime.now()
+    # Add the new string along with the current time
+    strings.append((new_string, current_time))
+    # Remove strings older than 20 seconds
+    strings = [s for s in strings if (current_time - s[1]).seconds <= 20]
+    # Calculate total length of strings in the past 20 seconds
+    total_length = sum(len(s[0]) for s in strings)
+    return total_length
 
 def extract_route_config(xml):
-
+    # windowed_total = process_string(xml)
+    # print(f'Windowed total: {windowed_total}')
     root = eT.fromstring(xml)
     route_element = root.find("./route")
     route_tag = route_element.get("tag")
@@ -74,9 +88,15 @@ def extract_route_config(xml):
 
 
 def extract_vehicle_location_snapshots(xml):
+    # windowed_total = process_string(xml)
+    # print(f'Windowed total: {windowed_total}')
     root = eT.fromstring(xml)
     vehicle_elements = root.findall("./vehicle")
     lastTimeElement = root.find("./lastTime")
+    if lastTimeElement is None:
+        print(xml)
+        print(f'Blowing up! {datetime.datetime.now()}')
+        sys.exit(-1) # this doesn't work, probably thread related, this is not how to handle getting rate limited
     # print(f'{len(vehicle_elements)} {lastTimeElement is None}')
     last_update_time = lastTimeElement.get("time")
     vehicle_locations_snapshots = []
@@ -87,6 +107,8 @@ def extract_vehicle_location_snapshots(xml):
 
 
 def extract_route_list(xml):
+    # windowed_total = process_string(xml)
+    # print(f'Windowed total: {windowed_total}')
     root = eT.fromstring(xml)
     route_elements = root.findall("./route")
     routes = []

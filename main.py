@@ -28,7 +28,7 @@ def after_request_func(data):
 
 def blob_update_vlss(route_tag: str, last_update_time: str):
     last_update_time, vehicle_location_snapshots = get_latest_vehicle_locations(last_update_time, route_tag)
-    # print(f'compeleted {route_tag} {len(vehicle_location_snapshots)}')
+    # print(f'completed {route_tag} {len(vehicle_location_snapshots)}')
     blob.blob.add_vls(vehicle_location_snapshots)
     blob.blob.update_direction_vls(route_tag)
     return route_tag, last_update_time
@@ -38,7 +38,7 @@ def vehicleLocations_update_loop(all_route_tags: List[str], monitored_route_tags
     last_update_routes_time = 0
     update_routes_delay = 15 * 60
     last_update_times = {}
-    delay = 15
+    delay = 21 # rate limit is 2MB/20sec, so 21 second pause should prevent twice in a window
     for monitored_route_tag in monitored_route_tags:
         last_update_times[monitored_route_tag] = '0'
     while 1:
@@ -52,7 +52,8 @@ def vehicleLocations_update_loop(all_route_tags: List[str], monitored_route_tags
                 for _ in concurrent.futures.as_completed(futuresa):
                     pass
             blob.blob.init_stops()
-            last_update_routes_time = int(time.time())  # print(f'Finished updating routes {last_update_routes_time}')
+            last_update_routes_time = int(time.time())
+            # print(f'Finished updating routes {last_update_routes_time}')
 
         if len(monitored_route_tags) > 0:
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -98,7 +99,7 @@ def vehicleLocations_expire_loop():
                     report_time = int(e.last_time / 1000) - e.secsSinceReport
                     delta_time = int(time.time()) - report_time
                     if delta_time > expiry_secs:
-                        print(f'direction Removing {e.id_} {delta_time}')
+                        # print(f'direction Removing {e.id_} {delta_time}')
                         d.remove(e)
                     # else:
                     #     print(f'direction Not Removing {e.id_} {delta_time}')
@@ -376,8 +377,8 @@ def main():
     all_route_tags = []
     for route in routes:
         all_route_tags.append(route.tag)
-    monitored_route_tags = ["301", "307", "501", "511", "504"]
-    main_loop(all_route_tags, all_route_tags)
+    monitored_route_tags = ['501', '503', '504', '505', '506', '507', '508', '509', '510', '511', '512']
+    main_loop(all_route_tags, monitored_route_tags) # avoiding rate limiting, so just doing primarily 'streetcar' routes
 
 
 def module_stuff():
@@ -393,7 +394,7 @@ def module_stuff():
 
 def save_state():
     module_stuff()
-    time.sleep(10)  # shit to start up
+    time.sleep(10)  # shift to start up
     with open('data.pkl', 'wb') as file:
         pickle.dump(blob.blob, file)
     return
