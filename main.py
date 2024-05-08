@@ -38,7 +38,7 @@ def vehicleLocations_update_loop(all_route_tags: List[str], monitored_route_tags
     last_update_routes_time = 0
     update_routes_delay = 15 * 60
     last_update_times = {}
-    delay = 21 # rate limit is 2MB/20sec, so 21 second pause should prevent twice in a window
+    delay = 30 # rate limit is 2MB/20sec, so 21 second pause should prevent twice in a window
     for monitored_route_tag in monitored_route_tags:
         last_update_times[monitored_route_tag] = '0'
     while 1:
@@ -58,16 +58,24 @@ def vehicleLocations_update_loop(all_route_tags: List[str], monitored_route_tags
         if len(monitored_route_tags) > 0:
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 futuresa = []
+                i = 0
                 for route_tag in monitored_route_tags:
+                    # print(f'Updating route {route_tag}')
                     futuresa.append(executor.submit(blob_update_vlss, route_tag=route_tag,
                                                     last_update_time=last_update_times[route_tag]))
+                    i = i + 1
+                    # print(f'{i} {len(monitored_route_tags)/10}')
+                    if i > len(monitored_route_tags)/10:
+                        # print('Going to sleep.')
+                        time.sleep(3)
+                        i = 0
                 for future in concurrent.futures.as_completed(futuresa):
                     route_tag, last_update_time = future.result()
                     last_update_times[route_tag] = last_update_time
         # print(f'Finished updating locations {time.ctime()}')
         end_time = int(time.time())
         total_time = end_time - start_time
-        # print(f'Loop time: {total_time}')
+        print(f'Loop time: {total_time}')
         if delay - total_time > 0:
             time.sleep(delay - total_time)
 
@@ -377,8 +385,8 @@ def main():
     all_route_tags = []
     for route in routes:
         all_route_tags.append(route.tag)
-    monitored_route_tags = ['501', '503', '504', '505', '506', '507', '508', '509', '510', '511', '512']
-    main_loop(all_route_tags, monitored_route_tags) # avoiding rate limiting, so just doing primarily 'streetcar' routes
+    # monitored_route_tags = ['501', '503', '504', '505', '506', '507', '508', '509', '510', '511', '512']
+    main_loop(all_route_tags, all_route_tags) # avoiding rate limiting, so just doing primarily 'streetcar' routes
 
 
 def module_stuff():

@@ -16,6 +16,11 @@ Rest API to return
 - vehicle locations for a specific route
 - it gets rate limited a lot
 
+## References
+
+See https://retro.umoiq.com/xmlFeedDocs/NextBusXMLFeed.pdf
+
+
 ## Modules
 
 - `main.py`: Implements the REST API and the main loop that monitors the NextBus API.
